@@ -31,24 +31,48 @@ def main():
         layout="centered"
     )
 
+    # ============================================================
+    # LOAD CSS / FONTS
+    # ============================================================
+
     load_css(
-        os.path.join(os.getcwd(), "static", "style.css")
+        os.path.join(
+            os.getcwd(),
+            "static",
+            "style.css"
+        )
     )
 
     inject_local_font(
-        os.path.join(os.getcwd(), "static", "AdobeClean.otf"),
+        os.path.join(
+            os.getcwd(),
+            "static",
+            "AdobeClean.otf"
+        ),
         "AdobeClean"
     )
 
+    # ============================================================
+    # DATABASE
+    # ============================================================
+
     init_db()
+
+    # ============================================================
+    # LOGIN
+    # ============================================================
 
     if not render_login_wall():
         return
 
+    # ============================================================
+    # SESSION DEFAULTS
+    # ============================================================
+
     initial_session_defaults()
 
     # ============================================================
-    # GROQ INITIALIZATION + DEPLOYMENT DIAGNOSTIC
+    # GROQ + AI VOICE PIPELINE
     # ============================================================
 
     if "voice_pipeline" not in st.session_state:
@@ -56,89 +80,76 @@ def main():
         try:
 
             # ----------------------------------------------------
-            # 1. Get Groq API key
+            # Get Groq API key
             # ----------------------------------------------------
 
-            api_key = os.environ.get("GROQ_API_KEY", "")
+            api_key = os.environ.get(
+                "GROQ_API_KEY",
+                ""
+            ).strip()
 
-            if api_key:
+            # Streamlit Cloud secrets fallback
+            if not api_key:
 
-                st.info(
-                    "Groq key loaded from environment variable."
+                try:
+                    api_key = str(
+                        st.secrets["GROQ_API_KEY"]
+                    ).strip()
+
+                except Exception:
+                    api_key = ""
+
+            # ----------------------------------------------------
+            # Make sure API key exists
+            # ----------------------------------------------------
+
+            if not api_key:
+
+                st.error(
+                    "GROQ_API_KEY was not found. "
+                    "Add it to Streamlit Cloud Secrets."
                 )
 
-            elif (
-                hasattr(st, "secrets")
-                and "GROQ_API_KEY" in st.secrets
-            ):
-
-                api_key = st.secrets["GROQ_API_KEY"]
-
-                st.info(
-                    "Groq key loaded from Streamlit secrets."
-                )
+                st.session_state.voice_pipeline = None
 
             else:
 
-                st.error(
-                    "GROQ_API_KEY was not found."
+                # ------------------------------------------------
+                # Create Groq client
+                # ------------------------------------------------
+
+                groq_client = Groq(
+                    api_key=api_key
                 )
 
-                st.stop()
+                # ------------------------------------------------
+                # Create LLM coach
+                #
+                # The actual model is configured in:
+                # services/coaching/llm.py
+                #
+                # Current model:
+                # openai/gpt-oss-20b
+                # ------------------------------------------------
 
-            # ----------------------------------------------------
-            # 2. Create Groq client
-            # ----------------------------------------------------
-
-            groq_client = Groq(
-                api_key=api_key
-            )
-
-            # ----------------------------------------------------
-            # 3. Test Groq model access
-            # ----------------------------------------------------
-
-            try:
-
-                test_model = groq_client.models.retrieve(
-                    "llama-3.1-8b-instant"
+                llm_coach = LLMCoach(
+                    groq_client
                 )
 
-                st.success(
-                    f"Groq connection OK: {test_model.id}"
+                # ------------------------------------------------
+                # Create text-to-speech
+                # ------------------------------------------------
+
+                tts = TextToSpeech()
+
+                # ------------------------------------------------
+                # Create voice pipeline
+                # ------------------------------------------------
+
+                st.session_state.voice_pipeline = VoicePipeline(
+                    llm_coach,
+                    tts
                 )
-
-            except Exception as e:
-
-                st.error(
-                    f"Groq connection failed: "
-                    f"{type(e).__name__}: {e}"
-                )
-
-                st.stop()
-
-            # ----------------------------------------------------
-            # 4. Create LLM coach
-            # ----------------------------------------------------
-
-            llm_coach = LLMCoach(
-                groq_client
-            )
-
-            # ----------------------------------------------------
-            # 5. Create text-to-speech
-            # ----------------------------------------------------
-
-            tts = TextToSpeech()
-
-            # ----------------------------------------------------
-            # 6. Create voice pipeline
-            # ----------------------------------------------------
-
-            st.session_state.voice_pipeline = VoicePipeline(
-                llm_coach,
-                tts
-            )
 
         except Exception as e:
 
@@ -166,18 +177,20 @@ def main():
 
         st.title("🏋️‍♂️ Apna AI Coach")
 
-        if st.session_state.username:
+        if st.session_state.get("username"):
+
             st.caption(
-                f"👤 Login as {st.session_state.username}"
+                f"👤 Login as "
+                f"{st.session_state.username}"
             )
 
         st.divider()
 
         st.subheader("Workout Plan")
 
-        # --------------------------------------------------------
-        # Workout has NOT started
-        # --------------------------------------------------------
+        # ========================================================
+        # WORKOUT NOT STARTED
+        # ========================================================
 
         if not workout_started:
 
@@ -211,17 +224,31 @@ def main():
                 key="start_session_button"
             )
 
+            # ====================================================
+            # START WORKOUT
+            # ====================================================
+
             if start_session_button:
 
-                st.session_state.exercise_type = plan_exercise
-                st.session_state.target_sets = int(plan_sets)
-                st.session_state.reps_per_set = int(plan_reps)
+                st.session_state.exercise_type = (
+                    plan_exercise
+                )
+
+                st.session_state.target_sets = int(
+                    plan_sets
+                )
+
+                st.session_state.reps_per_set = int(
+                    plan_reps
+                )
 
                 st.session_state.reps = 0
 
                 st.session_state.workout_started = True
 
-                st.session_state.set_cycle_started_at = time.time()
+                st.session_state.set_cycle_started_at = (
+                    time.time()
+                )
 
                 st.session_state.last_saved_sets_completed = 0
 
@@ -229,32 +256,46 @@ def main():
                 # Start AI coaching
                 # ------------------------------------------------
 
-                if st.session_state.voice_pipeline:
+                if st.session_state.get(
+                    "voice_pipeline"
+                ):
 
-                    result = (
-                        st.session_state.voice_pipeline.process_event(
-                            event="workout_started",
-                            exercise=plan_exercise,
-                            metrics={}
+                    try:
+
+                        result = (
+                            st.session_state.voice_pipeline
+                            .process_event(
+                                event="workout_started",
+                                exercise=plan_exercise,
+                                metrics={}
+                            )
                         )
-                    )
 
-                    if result:
+                        if result:
 
-                        (
-                            st.session_state.audio_to_play,
-                            st.session_state.coach_feedback
-                        ) = result
+                            (
+                                st.session_state.audio_to_play,
+                                st.session_state.coach_feedback
+                            ) = result
+
+                    except Exception as e:
+
+                        st.session_state.coach_feedback = (
+                            f"AI coaching error: "
+                            f"{type(e).__name__}: {e}"
+                        )
 
                 st.session_state.last_notified_sets_completed = 0
 
-                st.session_state.last_notified_workout_complete = False
+                st.session_state.last_notified_workout_complete = (
+                    False
+                )
 
                 st.rerun()
 
-        # --------------------------------------------------------
-        # Workout HAS started
-        # --------------------------------------------------------
+        # ========================================================
+        # WORKOUT STARTED
+        # ========================================================
 
         else:
 
@@ -271,7 +312,8 @@ def main():
             )
 
             st.info(
-                f"**{exercise}** -- {sets} Sets / {reps} Reps"
+                f"**{exercise}** -- "
+                f"{sets} Sets / {reps} Reps"
             )
 
             end_session_button = st.button(
@@ -280,30 +322,42 @@ def main():
                 width="stretch"
             )
 
+            # ====================================================
+            # END WORKOUT
+            # ====================================================
+
             if end_session_button:
 
                 st.session_state.workout_started = False
 
-                # ------------------------------------------------
-                # Workout completed AI feedback
-                # ------------------------------------------------
+                if st.session_state.get(
+                    "voice_pipeline"
+                ):
 
-                if st.session_state.voice_pipeline:
+                    try:
 
-                    result = (
-                        st.session_state.voice_pipeline.process_event(
-                            event="workout_completed",
-                            exercise=exercise,
-                            metrics={}
+                        result = (
+                            st.session_state.voice_pipeline
+                            .process_event(
+                                event="workout_completed",
+                                exercise=exercise,
+                                metrics={}
+                            )
                         )
-                    )
 
-                    if result:
+                        if result:
 
-                        (
-                            st.session_state.audio_to_play,
-                            st.session_state.coach_feedback
-                        ) = result
+                            (
+                                st.session_state.audio_to_play,
+                                st.session_state.coach_feedback
+                            ) = result
+
+                    except Exception as e:
+
+                        st.session_state.coach_feedback = (
+                            f"AI coaching error: "
+                            f"{type(e).__name__}: {e}"
+                        )
 
                 st.rerun()
 
@@ -320,23 +374,28 @@ def main():
             )
 
             total_reps = st.session_state.get(
-                "reps"
+                "reps",
+                0
             )
 
             current_set_reps = st.session_state.get(
-                "current_set_reps"
+                "current_set_reps",
+                0
             )
 
             reps_per_set = st.session_state.get(
-                "reps_per_set"
+                "reps_per_set",
+                0
             )
 
             sets_completed = st.session_state.get(
-                "sets_completed"
+                "sets_completed",
+                0
             )
 
             target_sets = st.session_state.get(
-                "target_sets"
+                "target_sets",
+                0
             )
 
             st.subheader("Progress")
@@ -358,9 +417,9 @@ def main():
 
             st.divider()
 
-            # ----------------------------------------------------
-            # Squats
-            # ----------------------------------------------------
+            # ====================================================
+            # SQUATS
+            # ====================================================
 
             if exercise == "Squats":
 
@@ -381,9 +440,9 @@ def main():
                     st.session_state.depth_status
                 )
 
-            # ----------------------------------------------------
-            # Push-ups
-            # ----------------------------------------------------
+            # ====================================================
+            # PUSH-UPS
+            # ====================================================
 
             elif exercise == "Push-ups":
 
@@ -404,9 +463,9 @@ def main():
                     st.session_state.hip_status
                 )
 
-            # ----------------------------------------------------
-            # Biceps Curls
-            # ----------------------------------------------------
+            # ====================================================
+            # BICEPS CURLS
+            # ====================================================
 
             elif exercise == "Biceps Curls (Dumbbell)":
 
@@ -427,13 +486,15 @@ def main():
                     st.session_state.swing_status
                 )
 
-            # ----------------------------------------------------
-            # Shoulder Press
-            # ----------------------------------------------------
+            # ====================================================
+            # SHOULDER PRESS
+            # ====================================================
 
             elif exercise == "Shoulder Press":
 
-                st.subheader("Shoulder Press Metrics")
+                st.subheader(
+                    "Shoulder Press Metrics"
+                )
 
                 st.metric(
                     "Elbow Angle",
@@ -450,9 +511,9 @@ def main():
                     st.session_state.back_arch_status
                 )
 
-            # ----------------------------------------------------
-            # Lunges
-            # ----------------------------------------------------
+            # ====================================================
+            # LUNGES
+            # ====================================================
 
             elif exercise == "Lunges":
 
@@ -487,7 +548,9 @@ def main():
     # AUDIO
     # ============================================================
 
-    if st.session_state.get("audio_to_play"):
+    if st.session_state.get(
+        "audio_to_play"
+    ):
 
         autoplay_audio(
             st.session_state.audio_to_play
@@ -497,7 +560,9 @@ def main():
     # COACH FEEDBACK
     # ============================================================
 
-    if st.session_state.get("coach_feedback"):
+    if st.session_state.get(
+        "coach_feedback"
+    ):
 
         st.markdown("")
 
@@ -540,7 +605,7 @@ def main():
 
             </div>
             """,
-            unsafe_allow_html=True,
+            unsafe_allow_html=True
         )
 
     else:
@@ -551,7 +616,9 @@ def main():
 
             mode=WebRtcMode.SENDRECV,
 
-            video_processor_factory=VideoProcessorClass,
+            video_processor_factory=(
+                VideoProcessorClass
+            ),
 
             rtc_configuration={
                 "iceServers": [
@@ -587,7 +654,9 @@ def main():
 
     st.divider()
 
-    st.markdown("#### Workout History")
+    st.markdown(
+        "#### Workout History"
+    )
 
     user_id = st.session_state.get(
         "user_id",
